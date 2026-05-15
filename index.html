@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perstalk — local speech to text</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --bg-elev: #141821;
+        --fg: #e7ecf3;
+        --muted: #8a94a6;
+        --accent: #7c5cff;
+        --accent-soft: rgba(124, 92, 255, 0.18);
+        --danger: #ff5d6c;
+        --border: rgba(255, 255, 255, 0.08);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+          system-ui, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 70% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+          radial-gradient(900px 500px at -10% 110%, rgba(43, 198, 255, 0.12), transparent 60%),
+          var(--bg);
+        color: var(--fg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 20px;
+      }
+      .card {
+        width: min(640px, 100%);
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)) , var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 32px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      .badge {
+        font-size: 12px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-variant-numeric: tabular-nums;
+      }
+      .icon-btn {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        width: 30px;
+        height: 28px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      .icon-btn:hover {
+        color: var(--fg);
+        border-color: rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.03);
+      }
+      .icon-btn svg { width: 16px; height: 16px; }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 100;
+      }
+      .modal-backdrop.open { display: flex; }
+      .modal {
+        width: min(640px, 100%);
+        max-height: calc(100vh - 40px);
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+      }
+      .modal header {
+        margin: 0;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .modal h2 {
+        font-size: 16px;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      .modal .body {
+        padding: 18px 20px;
+        overflow: auto;
+        flex: 1;
+      }
+      .modal .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0 0 10px;
+        line-height: 1.5;
+      }
+      .modal textarea {
+        width: 100%;
+        min-height: 240px;
+        resize: vertical;
+        background: rgba(0, 0, 0, 0.25);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.55;
+        outline: none;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .modal textarea:focus {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(0, 0, 0, 0.35);
+      }
+      .modal .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 14px 20px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .modal .footer .left,
+      .modal .footer .right {
+        display: flex;
+        gap: 8px;
+      }
+      .modal .save {
+        background: var(--accent-soft);
+        color: var(--fg);
+        border: 1px solid var(--accent-soft);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .modal .save:hover:not(:disabled) {
+        background: rgba(124, 92, 255, 0.28);
+        border-color: rgba(124, 92, 255, 0.45);
+      }
+      .modal .save:disabled { opacity: 0.5; cursor: not-allowed; }
+      .mic-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 28px 0 8px;
+      }
+      .mic {
+        --size: 112px;
+        width: var(--size);
+        height: var(--size);
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: radial-gradient(circle at 30% 30%, #2a2f3c, #161a23);
+        color: var(--fg);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: transform 120ms ease, box-shadow 200ms ease, background 200ms ease;
+        position: relative;
+      }
+      .mic:hover { transform: translateY(-1px); }
+      .mic:active { transform: translateY(0); }
+      .mic svg { width: 44px; height: 44px; }
+      .mic.recording {
+        background: radial-gradient(circle at 30% 30%, #ff7a87, #c63347);
+        box-shadow: 0 0 0 6px rgba(255, 93, 108, 0.18),
+                    0 10px 40px rgba(255, 93, 108, 0.35);
+      }
+      .mic.disabled { opacity: 0.55; cursor: not-allowed; }
+      .pulse {
+        position: absolute;
+        inset: -10px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 93, 108, 0.4);
+        animation: pulse 1.3s ease-out infinite;
+        pointer-events: none;
+        display: none;
+      }
+      .mic.recording .pulse { display: block; }
+      @keyframes pulse {
+        0% { transform: scale(0.9); opacity: 0.85; }
+        100% { transform: scale(1.4); opacity: 0; }
+      }
+      .status {
+        color: var(--muted);
+        font-size: 14px;
+        min-height: 1.2em;
+        font-variant-numeric: tabular-nums;
+      }
+      .status.err { color: var(--danger); }
+      .level {
+        width: 220px;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 999px;
+        overflow: hidden;
+        opacity: 0;
+        transition: opacity 200ms ease;
+      }
+      .mic.recording ~ .level { opacity: 1; }
+      .level > span {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #7c5cff, #2bc6ff);
+        transition: width 80ms linear;
+      }
+      .transcript {
+        margin-top: 24px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px 18px 14px;
+        min-height: 160px;
+        position: relative;
+      }
+      .transcript .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .transcript .text {
+        white-space: pre-wrap;
+        line-height: 1.55;
+        font-size: 16px;
+        color: var(--fg);
+        min-height: 80px;
+        outline: none;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin: -6px -8px;
+        transition: background 120ms ease, box-shadow 120ms ease;
+        caret-color: var(--fg);
+      }
+      .transcript .text:hover { background: rgba(255, 255, 255, 0.02); }
+      .transcript .text:focus {
+        background: rgba(255, 255, 255, 0.03);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+      }
+      .transcript .text.empty::before {
+        content: attr(data-placeholder);
+        color: var(--muted);
+        pointer-events: none;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button.ghost {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      button.ghost:hover { color: var(--fg); border-color: rgba(255,255,255,0.18); }
+      button.ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+      button.ghost.primary {
+        color: var(--fg);
+        border-color: var(--accent-soft);
+        background: var(--accent-soft);
+      }
+      button.ghost.primary:hover:not(:disabled) {
+        background: rgba(124, 92, 255, 0.28);
+        border-color: rgba(124, 92, 255, 0.45);
+      }
+      button.ghost.primary.busy {
+        position: relative;
+        color: transparent;
+      }
+      button.ghost.primary.busy::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        border-top-color: var(--fg);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      footer {
+        margin-top: 20px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+      kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border);
+        border-bottom-width: 2px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: var(--fg);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <header>
+        <h1>Perstalk</h1>
+        <div class="header-right">
+          <span class="badge" id="model-badge">local · mlx-whisper</span>
+          <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1z"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="mic-wrap">
+        <button id="mic" class="mic" aria-label="Start recording">
+          <span class="pulse"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="12" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <path d="M12 18v3" />
+            <path d="M8 21h8" />
+          </svg>
+        </button>
+        <div class="level"><span id="level-bar"></span></div>
+        <div id="status" class="status">Press the mic to start. Press again to stop.</div>
+      </div>
+
+      <section class="transcript">
+        <div class="label">Transcript <span style="opacity:.5; text-transform:none; letter-spacing:0; font-size:11px;">(editable)</span></div>
+        <div id="text" class="text empty" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Transcript (editable)" data-placeholder="Your words will appear here."></div>
+        <div class="actions">
+          <button id="rewrite" class="ghost primary" disabled title="Rewrite with local LLM to fix grammar and clarity">Rewrite</button>
+          <button id="copy" class="ghost" disabled>Copy</button>
+          <button id="clear" class="ghost" disabled>Clear</button>
+        </div>
+      </section>
+
+      <footer>
+        Press <kbd>Space</kbd> to toggle recording. Runs fully on-device.
+      </footer>
+    </main>
+
+    <div id="settings-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal">
+        <header>
+          <h2 id="settings-title">Settings</h2>
+        </header>
+        <div class="body">
+          <p class="hint">
+            <strong>Rewrite system prompt.</strong> Sent to the local LLM
+            (<span id="settings-llm-name">Qwen 2.5</span>) when you press
+            <em>Rewrite</em>. Edits are saved on disk and used immediately.
+          </p>
+          <textarea id="settings-prompt" spellcheck="false" placeholder="Loading…"></textarea>
+        </div>
+        <div class="footer">
+          <div class="left">
+            <button id="settings-reset" class="ghost" type="button">Reset to default</button>
+          </div>
+          <div class="right">
+            <button id="settings-cancel" class="ghost" type="button">Cancel</button>
+            <button id="settings-save" class="save" type="button" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const micBtn = document.getElementById('mic');
+      const statusEl = document.getElementById('status');
+      const textEl = document.getElementById('text');
+      const copyBtn = document.getElementById('copy');
+      const clearBtn = document.getElementById('clear');
+      const rewriteBtn = document.getElementById('rewrite');
+      const levelBar = document.getElementById('level-bar');
+      const modelBadge = document.getElementById('model-badge');
+
+      const TARGET_SAMPLE_RATE = 16000;
+
+      let state = 'idle'; // 'idle' | 'recording' | 'processing'
+      let modelReady = false;
+      let llmReady = false;
+      let rewriting = false;
+      let stream = null;
+      let audioCtx = null;
+      let sourceNode = null;
+      let workletNode = null;
+      let analyser = null;
+      let chunks = [];   // Float32Array chunks at TARGET_SAMPLE_RATE
+      let levelRaf = 0;
+
+      function prettyName(modelId) {
+        return (modelId || '').split('/').pop();
+      }
+
+      async function pollStatus() {
+        try {
+          const res = await fetch('/status');
+          const d = await res.json();
+          const asr = d.asr || {};
+          const llm = d.llm || {};
+
+          modelBadge.textContent = 'local · ' + prettyName(asr.model || '');
+          modelBadge.title = 'Speech: ' + (asr.model || '?') + '\nRewrite: ' + (llm.model || '?');
+
+          modelReady = asr.status === 'ready';
+          llmReady = llm.status === 'ready';
+
+          micBtn.classList.toggle('disabled', !modelReady);
+          refreshTranscriptState();
+
+          // Status line: speech model takes priority since it gates the mic.
+          if (asr.status === 'error') {
+            setStatus('Speech model error: ' + (asr.error || 'unknown'), true);
+          } else if (asr.status !== 'ready') {
+            const label = asr.status === 'downloading'
+              ? `Downloading speech model (${prettyName(asr.model)})…`
+              : asr.status === 'warming'
+                ? 'Warming up speech model…'
+                : 'Booting…';
+            setStatus(label);
+          } else if (state === 'idle' && !rewriting) {
+            // Speech model ready — surface LLM progress until it's also ready.
+            if (llm.status === 'error') {
+              setStatus('Rewrite unavailable: ' + (llm.error || 'unknown'), true);
+            } else if (llm.status === 'downloading') {
+              setStatus(`Press the mic to start. (Loading rewrite model ${prettyName(llm.model)}…)`);
+            } else if (llm.status === 'warming') {
+              setStatus('Press the mic to start. (Warming up rewrite model…)');
+            } else {
+              setStatus('Press the mic to start. Press again to stop.');
+            }
+          }
+
+          if (!modelReady || !llmReady) {
+            setTimeout(pollStatus, 1500);
+          }
+        } catch {
+          setStatus('Server unreachable.', true);
+          setTimeout(pollStatus, 2000);
+        }
+      }
+      pollStatus();
+
+      function setStatus(msg, isError = false) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('err', !!isError);
+      }
+
+      function setState(next) {
+        state = next;
+        micBtn.classList.toggle('recording', next === 'recording');
+        micBtn.classList.toggle('disabled', next === 'processing');
+        micBtn.setAttribute(
+          'aria-label',
+          next === 'recording' ? 'Stop recording' : 'Start recording'
+        );
+      }
+
+      // Downsample a Float32Array from `inRate` to `outRate` using simple averaging.
+      function downsample(buffer, inRate, outRate) {
+        if (outRate === inRate) return buffer;
+        const ratio = inRate / outRate;
+        const newLen = Math.floor(buffer.length / ratio);
+        const out = new Float32Array(newLen);
+        let oPos = 0;
+        let iPos = 0;
+        while (oPos < newLen) {
+          const nextI = Math.floor((oPos + 1) * ratio);
+          let sum = 0;
+          let count = 0;
+          for (let i = iPos; i < nextI && i < buffer.length; i++) {
+            sum += buffer[i];
+            count++;
+          }
+          out[oPos] = count > 0 ? sum / count : 0;
+          oPos++;
+          iPos = nextI;
+        }
+        return out;
+      }
+
+      function encodeWav(float32, sampleRate) {
+        const pcm = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          let s = Math.max(-1, Math.min(1, float32[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        const bytesPerSample = 2;
+        const blockAlign = 1 * bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = pcm.length * bytesPerSample;
+        const buf = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buf);
+        const writeStr = (off, str) => {
+          for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
+        };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
+        new Int16Array(buf, 44).set(pcm);
+        return new Blob([buf], { type: 'audio/wav' });
+      }
+
+      function concatFloat32(arrays) {
+        let total = 0;
+        for (const a of arrays) total += a.length;
+        const out = new Float32Array(total);
+        let off = 0;
+        for (const a of arrays) {
+          out.set(a, off);
+          off += a.length;
+        }
+        return out;
+      }
+
+      // Build a tiny inline AudioWorklet that just forwards Float32 input chunks.
+      const workletSrc = `
+        class CaptureProcessor extends AudioWorkletProcessor {
+          process(inputs) {
+            const input = inputs[0];
+            if (input && input[0]) {
+              this.port.postMessage(input[0].slice(0));
+            }
+            return true;
+          }
+        }
+        registerProcessor('capture-processor', CaptureProcessor);
+      `;
+
+      async function startRecording() {
+        if (state !== 'idle') return;
+        setStatus('Requesting microphone…');
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+        } catch (err) {
+          setStatus('Microphone access denied.', true);
+          return;
+        }
+
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const inRate = audioCtx.sampleRate;
+
+        const blob = new Blob([workletSrc], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        try {
+          await audioCtx.audioWorklet.addModule(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        workletNode = new AudioWorkletNode(audioCtx, 'capture-processor');
+
+        chunks = [];
+        workletNode.port.onmessage = (e) => {
+          const raw = e.data; // Float32Array at inRate
+          const down = downsample(raw, inRate, TARGET_SAMPLE_RATE);
+          chunks.push(down);
+        };
+
+        sourceNode.connect(analyser);
+        sourceNode.connect(workletNode);
+        // Worklet has no audible output — do not connect to destination.
+
+        const buf = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          analyser.getByteTimeDomainData(buf);
+          let peak = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = Math.abs(buf[i] - 128) / 128;
+            if (v > peak) peak = v;
+          }
+          levelBar.style.width = Math.min(100, peak * 140) + '%';
+          levelRaf = requestAnimationFrame(tick);
+        };
+        levelRaf = requestAnimationFrame(tick);
+
+        setState('recording');
+        setStatus('Listening… click again to stop.');
+      }
+
+      async function stopRecording() {
+        if (state !== 'recording') return;
+        setState('processing');
+        setStatus('Transcribing…');
+        cancelAnimationFrame(levelRaf);
+        levelBar.style.width = '0%';
+
+        try {
+          workletNode && workletNode.disconnect();
+          sourceNode && sourceNode.disconnect();
+          analyser && analyser.disconnect();
+          stream && stream.getTracks().forEach(t => t.stop());
+          if (audioCtx) await audioCtx.close();
+        } catch {}
+
+        const merged = concatFloat32(chunks);
+        chunks = [];
+
+        if (merged.length < TARGET_SAMPLE_RATE * 0.2) {
+          setState('idle');
+          setStatus('Too short — try again.', true);
+          return;
+        }
+
+        const wav = encodeWav(merged, TARGET_SAMPLE_RATE);
+        const fd = new FormData();
+        fd.append('audio', wav, 'speech.wav');
+
+        const t0 = performance.now();
+        let res;
+        try {
+          res = await fetch('/transcribe', { method: 'POST', body: fd });
+        } catch (err) {
+          setState('idle');
+          setStatus('Server unreachable.', true);
+          return;
+        }
+        const elapsed = Math.round(performance.now() - t0);
+
+        if (!res.ok) {
+          let detail = res.statusText;
+          try { detail = (await res.json()).detail || detail; } catch {}
+          setState('idle');
+          setStatus('Error: ' + detail, true);
+          return;
+        }
+
+        const data = await res.json();
+        const text = (data.text || '').trim();
+        if (text) {
+          appendTranscript(text);
+          refreshTranscriptState();
+          const secs = (data.duration_ms / 1000).toFixed(1);
+          setStatus(`Done — ${secs}s audio · ${elapsed}ms round-trip.`);
+        } else {
+          setStatus('No speech detected.', true);
+        }
+        setState('idle');
+      }
+
+      function appendTranscript(newText) {
+        const existing = textEl.textContent;
+        const trimmed = existing.replace(/\s+$/, '');
+        let separator = '';
+        if (trimmed.length > 0) {
+          const lastChar = trimmed.slice(-1);
+          separator = /[.!?]/.test(lastChar) ? ' ' : ' ';
+        }
+        textEl.textContent = trimmed + separator + newText;
+
+        // Move caret to the end so the user can keep typing/dictating naturally.
+        textEl.focus({ preventScroll: true });
+        const range = document.createRange();
+        range.selectNodeContents(textEl);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function refreshTranscriptState() {
+        const hasText = textEl.textContent.trim().length > 0;
+        textEl.classList.toggle('empty', !hasText);
+        copyBtn.disabled = !hasText || rewriting;
+        clearBtn.disabled = !hasText || rewriting;
+        rewriteBtn.disabled = !hasText || !llmReady || rewriting;
+      }
+
+      textEl.addEventListener('input', refreshTranscriptState);
+      textEl.addEventListener('blur', () => {
+        if (!textEl.textContent.trim()) {
+          // Strip stray <br> the browser leaves behind after deleting everything.
+          textEl.innerHTML = '';
+          refreshTranscriptState();
+        }
+      });
+
+      micBtn.addEventListener('click', () => {
+        if (!modelReady && state === 'idle') return;
+        if (state === 'idle') startRecording();
+        else if (state === 'recording') stopRecording();
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code !== 'Space' || e.repeat) return;
+        // Don't hijack space when the user is editing the transcript or any input.
+        const a = document.activeElement;
+        if (a && (a === textEl || a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        if (!modelReady && state === 'idle') return;
+        if (state === 'idle') startRecording();
+        else if (state === 'recording') stopRecording();
+      });
+
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(textEl.textContent);
+          const prev = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => (copyBtn.textContent = prev), 1200);
+        } catch {
+          setStatus('Could not copy to clipboard.', true);
+        }
+      });
+
+      clearBtn.addEventListener('click', () => {
+        textEl.innerHTML = '';
+        refreshTranscriptState();
+        setStatus('Press the mic to start. Press again to stop.');
+      });
+
+      rewriteBtn.addEventListener('click', async () => {
+        const original = (textEl.innerText || textEl.textContent || '').trim();
+        if (!original || !llmReady || rewriting) return;
+
+        rewriting = true;
+        rewriteBtn.classList.add('busy');
+        textEl.setAttribute('contenteditable', 'false');
+        refreshTranscriptState();
+        setStatus('Rewriting locally…');
+
+        const t0 = performance.now();
+        let res;
+        try {
+          res = await fetch('/rewrite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: original }),
+          });
+        } catch {
+          finishRewrite();
+          setStatus('Server unreachable.', true);
+          return;
+        }
+        const elapsed = Math.round(performance.now() - t0);
+
+        if (!res.ok) {
+          let detail = res.statusText;
+          try { detail = (await res.json()).detail || detail; } catch {}
+          finishRewrite();
+          setStatus('Rewrite failed: ' + detail, true);
+          return;
+        }
+
+        const data = await res.json();
+        const cleaned = (data.text || '').trim();
+        if (cleaned) {
+          textEl.textContent = cleaned;
+          setStatus(`Rewrote in ${elapsed}ms.`);
+        } else {
+          setStatus('Rewrite returned empty text.', true);
+        }
+        finishRewrite();
+      });
+
+      function finishRewrite() {
+        rewriting = false;
+        rewriteBtn.classList.remove('busy');
+        textEl.setAttribute('contenteditable', 'true');
+        refreshTranscriptState();
+      }
+
+      // ----- Settings modal -----
+      const settingsBtn = document.getElementById('settings-btn');
+      const settingsModal = document.getElementById('settings-modal');
+      const settingsPrompt = document.getElementById('settings-prompt');
+      const settingsSave = document.getElementById('settings-save');
+      const settingsCancel = document.getElementById('settings-cancel');
+      const settingsReset = document.getElementById('settings-reset');
+      const settingsLlmName = document.getElementById('settings-llm-name');
+
+      let settingsLoaded = { prompt: '', defaultPrompt: '' };
+
+      async function openSettings() {
+        settingsPrompt.value = 'Loading…';
+        settingsPrompt.disabled = true;
+        settingsSave.disabled = true;
+        settingsModal.classList.add('open');
+        try {
+          const res = await fetch('/settings');
+          const d = await res.json();
+          settingsLoaded.prompt = d.rewrite_prompt || '';
+          settingsLoaded.defaultPrompt = d.default_rewrite_prompt || '';
+          settingsPrompt.value = settingsLoaded.prompt;
+          settingsPrompt.disabled = false;
+          // Set the model name in the hint if we know it.
+          try {
+            const s = await fetch('/status').then(r => r.json());
+            if (s && s.llm && s.llm.model) {
+              settingsLlmName.textContent = prettyName(s.llm.model);
+            }
+          } catch {}
+          settingsPrompt.focus();
+          updateSaveEnabled();
+        } catch (err) {
+          settingsPrompt.value = 'Failed to load settings.';
+        }
+      }
+
+      function closeSettings() {
+        settingsModal.classList.remove('open');
+      }
+
+      function updateSaveEnabled() {
+        const cur = settingsPrompt.value.trim();
+        settingsSave.disabled = !cur || cur === settingsLoaded.prompt;
+      }
+
+      settingsBtn.addEventListener('click', openSettings);
+      settingsCancel.addEventListener('click', closeSettings);
+      settingsModal.addEventListener('click', (e) => {
+        if (e.target === settingsModal) closeSettings();
+      });
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && settingsModal.classList.contains('open')) {
+          e.preventDefault();
+          closeSettings();
+        }
+      });
+      settingsPrompt.addEventListener('input', updateSaveEnabled);
+
+      settingsReset.addEventListener('click', async () => {
+        settingsReset.disabled = true;
+        try {
+          const res = await fetch('/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset: true }),
+          });
+          if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+          const d = await res.json();
+          settingsLoaded.prompt = d.rewrite_prompt;
+          settingsPrompt.value = d.rewrite_prompt;
+          updateSaveEnabled();
+          setStatus('Rewrite prompt reset to default.');
+        } catch (err) {
+          setStatus('Reset failed: ' + (err && err.message ? err.message : err), true);
+        } finally {
+          settingsReset.disabled = false;
+        }
+      });
+
+      settingsSave.addEventListener('click', async () => {
+        const newPrompt = settingsPrompt.value.trim();
+        if (!newPrompt) return;
+        settingsSave.disabled = true;
+        const prevLabel = settingsSave.textContent;
+        settingsSave.textContent = 'Saving…';
+        try {
+          const res = await fetch('/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rewrite_prompt: newPrompt }),
+          });
+          if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+          const d = await res.json();
+          settingsLoaded.prompt = d.rewrite_prompt;
+          settingsSave.textContent = 'Saved';
+          setStatus('Rewrite prompt updated.');
+          setTimeout(() => {
+            settingsSave.textContent = prevLabel;
+            closeSettings();
+            updateSaveEnabled();
+          }, 600);
+        } catch (err) {
+          settingsSave.textContent = prevLabel;
+          settingsSave.disabled = false;
+          setStatus('Save failed: ' + (err && err.message ? err.message : err), true);
+        }
+      });
+    </script>
+  </body>
+</html>

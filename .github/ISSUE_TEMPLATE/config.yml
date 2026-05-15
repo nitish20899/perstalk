@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/nitish20899/perstalk/discussions
+    about: Use Discussions for usage questions and ideas not yet ready to be issues.

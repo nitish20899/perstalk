@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an idea or improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        Start with the user problem rather than the implementation. e.g.
+        "When I dictate long notes, I want to break them into paragraphs."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: How you imagine the feature working. Mockups welcome.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: Other approaches you thought about and why you didn't pick them.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?

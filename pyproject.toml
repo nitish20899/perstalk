@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # long lines (formatter handles wrapping)
+    "B008",  # FastAPI uses Depends/File defaults intentionally
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -8,6 +8,7 @@ Single-page app: serves index.html and exposes
 Both models are downloaded and warmed at startup so user actions don't block
 on multi-GB downloads.
 """
+
 from __future__ import annotations
 
 import io
@@ -69,9 +70,7 @@ class StageState:
                 "message": self.message,
                 "error": self.error,
                 "ready_after_s": (
-                    round(self.ready_at - self.started_at, 1)
-                    if self.ready_at
-                    else None
+                    round(self.ready_at - self.started_at, 1) if self.ready_at else None
                 ),
             }
 
@@ -119,7 +118,8 @@ def _warm_llm() -> None:
         LLM_STATE.set("downloading", f"Downloading {LLM_MODEL}…")
         print(f"[perstalk][llm] loading: {LLM_MODEL}", flush=True)
 
-        from mlx_lm import load as lm_load, generate as lm_generate
+        from mlx_lm import generate as lm_generate
+        from mlx_lm import load as lm_load
         from mlx_lm.sample_utils import make_sampler
 
         _llm_model, _llm_tokenizer = lm_load(LLM_MODEL)
@@ -212,7 +212,9 @@ async def transcribe(audio: UploadFile = File(...)) -> JSONResponse:
     snap = ASR_STATE.snapshot()
     if snap["status"] != "ready":
         if snap["status"] == "error":
-            raise HTTPException(status_code=503, detail=snap["error"] or "Speech model failed to load.")
+            raise HTTPException(
+                status_code=503, detail=snap["error"] or "Speech model failed to load."
+            )
         raise HTTPException(
             status_code=503,
             detail=f"Speech model not ready yet ({snap['status']}: {snap['message']}).",
@@ -302,7 +304,7 @@ def _save_settings_to_disk() -> None:
             file=sys.stderr,
             flush=True,
         )
-        raise HTTPException(status_code=500, detail="Could not save settings.")
+        raise HTTPException(status_code=500, detail="Could not save settings.") from exc
 
 
 def _current_rewrite_prompt() -> str:
@@ -314,8 +316,11 @@ _load_settings_from_disk()
 
 
 class SettingsUpdate(BaseModel):
-    rewrite_prompt: Optional[str] = None
-    reset: Optional[bool] = False
+    # Optional[...] (not "X | None") because Pydantic v2 evaluates string
+    # annotations at runtime, and "X | None" requires Python 3.10+. Perstalk
+    # supports 3.9. The ruff hint to use the new syntax is wrong here.
+    rewrite_prompt: Optional[str] = None  # noqa: UP045
+    reset: Optional[bool] = False  # noqa: UP045
 
 
 @app.get("/settings")
@@ -364,7 +369,9 @@ async def rewrite(req: RewriteRequest) -> JSONResponse:
     snap = LLM_STATE.snapshot()
     if snap["status"] != "ready":
         if snap["status"] == "error":
-            raise HTTPException(status_code=503, detail=snap["error"] or "Rewrite model failed to load.")
+            raise HTTPException(
+                status_code=503, detail=snap["error"] or "Rewrite model failed to load."
+            )
         raise HTTPException(
             status_code=503,
             detail=f"Rewrite model not ready yet ({snap['status']}: {snap['message']}).",

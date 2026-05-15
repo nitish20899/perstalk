@@ -1,0 +1,85 @@
+name: Bug report
+description: Something isn't working as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! The more detail, the
+        faster we can fix it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I press the mic and speak…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `./start.sh`
+        2. Open http://127.0.0.1:5050
+        3. Click the mic and say "hello"
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion`
+      placeholder: "14.5"
+    validations:
+      required: true
+
+  - type: input
+    id: chip
+    attributes:
+      label: Mac chip
+      description: Output of `sysctl -n machdep.cpu.brand_string`
+      placeholder: "Apple M2 Pro"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python3 --version`
+      placeholder: "Python 3.12.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal output
+      description: Paste the relevant lines from the `./start.sh` terminal.
+      render: shell
+
+  - type: textarea
+    id: status
+    attributes:
+      label: /status response (if server is up)
+      description: Output of `curl -s http://127.0.0.1:5050/status`
+      render: json
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Browser console errors, screenshots, related issues, etc.

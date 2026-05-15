@@ -1,6 +1,27 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Local secrets / config — never commit
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.netrc
+.aws/
+.huggingface/
+
+# Perstalk user-editable settings (may contain a personal prompt)
 settings.json

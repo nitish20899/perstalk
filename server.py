@@ -3,6 +3,7 @@
 Single-page app: serves index.html and exposes
   - POST /transcribe : 16 kHz mono WAV  → text
   - POST /rewrite    : { "text": "..." } → grammar-cleaned text via local LLM
+  - POST /dictate    : 16 kHz mono WAV  → grammar-cleaned text in one call
   - GET  /status     : combined readiness for both models
 
 Both models are downloaded and warmed at startup so user actions don't block
@@ -22,9 +23,11 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+from text_formatting import apply_spoken_formatting
 
 # --- model configuration ------------------------------------------------------
 # Whisper (speech → text). large-v3-turbo is the latest Whisper model: distilled
@@ -34,6 +37,12 @@ ASR_MODEL = os.environ.get("PERSTALK_MODEL", "mlx-community/whisper-large-v3-tur
 # LLM (text → cleaned text). Qwen2.5-3B-Instruct-4bit is small (~2 GB), very
 # fast on Apple Silicon, and excellent at instruction-following edits.
 LLM_MODEL = os.environ.get("PERSTALK_LLM", "mlx-community/Qwen2.5-3B-Instruct-4bit")
+REWRITE_ENABLED = os.environ.get("PERSTALK_REWRITE_ENABLED", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 BASE_DIR = Path(__file__).parent.resolve()
 INDEX_FILE = BASE_DIR / "index.html"
@@ -48,7 +57,7 @@ class StageState:
 
     def __init__(self, label: str) -> None:
         self.label = label
-        self.status = "pending"  # pending | downloading | warming | ready | error
+        self.status = "pending"  # pending | downloading | warming | ready | disabled | error
         self.message = "Pending…"
         self.error: str | None = None
         self.ready_at: float | None = None
@@ -81,6 +90,32 @@ LLM_STATE = StageState("llm")
 # Lazily populated after warmup so transcribe/rewrite avoid per-request load.
 _llm_model = None
 _llm_tokenizer = None
+
+
+def _int_env(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        print(
+            f"[perstalk][config] ignoring invalid {name}={raw!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default
+    return max(min_value, min(max_value, value))
+
+
+REWRITE_MAX_OUTPUT_TOKENS = _int_env("PERSTALK_REWRITE_MAX_TOKENS", 2048, 64, 4096)
+REWRITE_MIN_OUTPUT_TOKENS = _int_env(
+    "PERSTALK_REWRITE_MIN_TOKENS",
+    64,
+    16,
+    REWRITE_MAX_OUTPUT_TOKENS,
+)
+REWRITE_TOKEN_BUFFER = _int_env("PERSTALK_REWRITE_TOKEN_BUFFER", 48, 0, 512)
 
 
 # --- background warmup --------------------------------------------------------
@@ -128,7 +163,7 @@ def _warm_llm() -> None:
         print("[perstalk][llm] warming…", flush=True)
 
         messages = [
-            {"role": "system", "content": "You echo a single word."},
+            {"role": "system", "content": _current_rewrite_prompt()},
             {"role": "user", "content": "ok"},
         ]
         prompt = _llm_tokenizer.apply_chat_template(
@@ -153,7 +188,10 @@ def _warm_llm() -> None:
 @app.on_event("startup")
 def _start_warmup() -> None:
     threading.Thread(target=_warm_asr, name="perstalk-asr", daemon=True).start()
-    threading.Thread(target=_warm_llm, name="perstalk-llm", daemon=True).start()
+    if REWRITE_ENABLED:
+        threading.Thread(target=_warm_llm, name="perstalk-llm", daemon=True).start()
+    else:
+        LLM_STATE.set("disabled", "Rewrite model disabled.")
 
 
 # --- audio helpers ------------------------------------------------------------
@@ -188,6 +226,58 @@ def _wav_bytes_to_float32(raw: bytes) -> np.ndarray:
     return audio
 
 
+def _require_ready(state: StageState, label: str) -> None:
+    snap = state.snapshot()
+    if snap["status"] == "ready":
+        return
+    if snap["status"] == "error":
+        raise HTTPException(status_code=503, detail=snap["error"] or f"{label} failed to load.")
+    raise HTTPException(
+        status_code=503,
+        detail=f"{label} not ready yet ({snap['status']}: {snap['message']}).",
+    )
+
+
+def _empty_transcription(duration_ms: int = 0) -> dict:
+    return {
+        "text": "",
+        "language": None,
+        "duration_ms": duration_ms,
+        "elapsed_ms": 0,
+        "model": ASR_MODEL,
+    }
+
+
+def _is_probably_silent(samples: np.ndarray) -> bool:
+    if samples.size == 0:
+        return True
+    peak = float(np.max(np.abs(samples)))
+    rms = float(np.sqrt(np.mean(np.square(samples))))
+    return peak < 0.01 and rms < 0.003
+
+
+def _transcribe_samples(samples: np.ndarray) -> dict:
+    duration_ms = int(samples.size / 16)
+    if samples.size < 1600:
+        return _empty_transcription()
+    if _is_probably_silent(samples):
+        return _empty_transcription(duration_ms=duration_ms)
+
+    import mlx_whisper
+
+    started = time.perf_counter()
+    result = mlx_whisper.transcribe(samples, path_or_hf_repo=ASR_MODEL)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+    return {
+        "text": (result.get("text") or "").strip(),
+        "language": result.get("language"),
+        "duration_ms": duration_ms,
+        "elapsed_ms": elapsed_ms,
+        "model": ASR_MODEL,
+    }
+
+
 # --- routes -------------------------------------------------------------------
 @app.get("/")
 def root() -> FileResponse:
@@ -196,55 +286,35 @@ def root() -> FileResponse:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"ok": True, "asr_model": ASR_MODEL, "llm_model": LLM_MODEL}
+    return {
+        "ok": True,
+        "asr_model": ASR_MODEL,
+        "llm_model": LLM_MODEL if REWRITE_ENABLED else None,
+        "rewrite_enabled": REWRITE_ENABLED,
+    }
 
 
 @app.get("/status")
 def status() -> dict:
     return {
         "asr": {"model": ASR_MODEL, **ASR_STATE.snapshot()},
-        "llm": {"model": LLM_MODEL, **LLM_STATE.snapshot()},
+        "llm": {
+            "model": LLM_MODEL if REWRITE_ENABLED else None,
+            **LLM_STATE.snapshot(),
+        },
     }
 
 
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)) -> JSONResponse:
-    snap = ASR_STATE.snapshot()
-    if snap["status"] != "ready":
-        if snap["status"] == "error":
-            raise HTTPException(
-                status_code=503, detail=snap["error"] or "Speech model failed to load."
-            )
-        raise HTTPException(
-            status_code=503,
-            detail=f"Speech model not ready yet ({snap['status']}: {snap['message']}).",
-        )
+    _require_ready(ASR_STATE, "Speech model")
 
     raw = await audio.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty upload.")
 
     samples = _wav_bytes_to_float32(raw)
-
-    if samples.size < 1600:
-        return JSONResponse({"text": "", "duration_ms": 0, "elapsed_ms": 0})
-
-    import mlx_whisper
-
-    started = time.perf_counter()
-    result = mlx_whisper.transcribe(samples, path_or_hf_repo=ASR_MODEL)
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-
-    text = (result.get("text") or "").strip()
-    return JSONResponse(
-        {
-            "text": text,
-            "language": result.get("language"),
-            "duration_ms": int(samples.size / 16),
-            "elapsed_ms": elapsed_ms,
-            "model": ASR_MODEL,
-        }
-    )
+    return JSONResponse(_transcribe_samples(samples))
 
 
 class RewriteRequest(BaseModel):
@@ -364,39 +434,59 @@ def _strip_quotes(s: str) -> str:
     return s
 
 
-@app.post("/rewrite")
-async def rewrite(req: RewriteRequest) -> JSONResponse:
-    snap = LLM_STATE.snapshot()
-    if snap["status"] != "ready":
-        if snap["status"] == "error":
-            raise HTTPException(
-                status_code=503, detail=snap["error"] or "Rewrite model failed to load."
-            )
-        raise HTTPException(
-            status_code=503,
-            detail=f"Rewrite model not ready yet ({snap['status']}: {snap['message']}).",
-        )
+_apply_spoken_formatting = apply_spoken_formatting
 
-    text = (req.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Empty text.")
-    if len(text) > 20000:
-        raise HTTPException(status_code=400, detail="Text too long (max 20,000 chars).")
 
+def _clean_context_value(value: Optional[str], max_len: int = 80) -> str:  # noqa: UP045
+    if not value:
+        return ""
+    cleaned = " ".join(value.split())
+    return cleaned[:max_len]
+
+
+def _rewrite_prompt_for_context(  # noqa: UP045
+    app_name: Optional[str] = None,  # noqa: UP045
+    bundle_id: Optional[str] = None,  # noqa: UP045
+) -> str:
+    app = _clean_context_value(app_name)
+    bundle = _clean_context_value(bundle_id, max_len=120)
+    if not app and not bundle:
+        return _current_rewrite_prompt()
+
+    target = app or bundle
+    return (
+        _current_rewrite_prompt() + "\n\n"
+        "Insertion context:\n"
+        f"- The cleaned text will be inserted into: {target}.\n"
+        "- Lightly adapt formatting to the likely destination: concise for chat, "
+        "complete sentences for email/documents, plain text for notes, and preserve "
+        "technical identifiers or code-like terms for developer tools.\n"
+        "- Do not mention this context or the destination app."
+    )
+
+
+def _rewrite_text(
+    text: str,
+    app_name: Optional[str] = None,  # noqa: UP045
+    bundle_id: Optional[str] = None,  # noqa: UP045
+) -> dict:  # noqa: UP045
     from mlx_lm import generate as lm_generate
     from mlx_lm.sample_utils import make_sampler
 
+    formatted_text = apply_spoken_formatting(text)
     messages = [
-        {"role": "system", "content": _current_rewrite_prompt()},
-        {"role": "user", "content": text},
+        {"role": "system", "content": _rewrite_prompt_for_context(app_name, bundle_id)},
+        {"role": "user", "content": formatted_text},
     ]
     prompt = _llm_tokenizer.apply_chat_template(
         messages, add_generation_prompt=True, tokenize=False
     )
 
-    # Generous max_tokens: roughly 1.5x input length should always be enough.
-    input_tokens = len(_llm_tokenizer.encode(text))
-    max_tokens = min(4096, max(256, int(input_tokens * 1.5) + 64))
+    input_tokens = len(_llm_tokenizer.encode(formatted_text))
+    max_tokens = min(
+        REWRITE_MAX_OUTPUT_TOKENS,
+        max(REWRITE_MIN_OUTPUT_TOKENS, int(input_tokens * 1.35) + REWRITE_TOKEN_BUFFER),
+    )
 
     started = time.perf_counter()
     out = lm_generate(
@@ -408,13 +498,106 @@ async def rewrite(req: RewriteRequest) -> JSONResponse:
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-    cleaned = _strip_quotes(out)
+    return {
+        "text": _strip_quotes(out),
+        "formatted_input": formatted_text,
+        "elapsed_ms": elapsed_ms,
+        "model": LLM_MODEL,
+        "max_tokens": max_tokens,
+    }
+
+
+@app.post("/rewrite")
+async def rewrite(req: RewriteRequest) -> JSONResponse:
+    if not REWRITE_ENABLED:
+        raise HTTPException(status_code=503, detail="Rewrite model is disabled.")
+    _require_ready(LLM_STATE, "Rewrite model")
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text.")
+    if len(text) > 20000:
+        raise HTTPException(status_code=400, detail="Text too long (max 20,000 chars).")
+
+    rewrite_result = _rewrite_text(text)
+    return JSONResponse(rewrite_result)
+
+
+@app.post("/dictate")
+async def dictate(
+    audio: UploadFile = File(...),
+    app_name: Optional[str] = Form(None),  # noqa: UP045
+    bundle_id: Optional[str] = Form(None),  # noqa: UP045
+) -> JSONResponse:
+    """Transcribe audio and return polished text in one latency-friendly call."""
+    _require_ready(ASR_STATE, "Speech model")
+    if REWRITE_ENABLED:
+        _require_ready(LLM_STATE, "Rewrite model")
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+
+    started = time.perf_counter()
+    samples = _wav_bytes_to_float32(raw)
+    transcribe_result = _transcribe_samples(samples)
+    transcript = transcribe_result["text"]
+
+    if not transcript:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return JSONResponse(
+            {
+                "text": "",
+                "transcript": "",
+                "formatted_transcript": "",
+                "language": transcribe_result["language"],
+                "duration_ms": transcribe_result["duration_ms"],
+                "transcribe_elapsed_ms": transcribe_result["elapsed_ms"],
+                "rewrite_elapsed_ms": 0,
+                "elapsed_ms": elapsed_ms,
+                "asr_model": ASR_MODEL,
+                "llm_model": LLM_MODEL if REWRITE_ENABLED else None,
+            }
+        )
+
+    if len(transcript) > 20000:
+        raise HTTPException(status_code=400, detail="Transcript too long (max 20,000 chars).")
+
+    if not REWRITE_ENABLED:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return JSONResponse(
+            {
+                "text": transcript,
+                "transcript": transcript,
+                "formatted_transcript": None,
+                "language": transcribe_result["language"],
+                "duration_ms": transcribe_result["duration_ms"],
+                "transcribe_elapsed_ms": transcribe_result["elapsed_ms"],
+                "rewrite_elapsed_ms": 0,
+                "elapsed_ms": elapsed_ms,
+                "asr_model": ASR_MODEL,
+                "llm_model": None,
+                "max_tokens": None,
+            }
+        )
+
+    rewrite_result = _rewrite_text(transcript, app_name=app_name, bundle_id=bundle_id)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    cleaned = rewrite_result["text"].strip() or transcript
+
     return JSONResponse(
         {
             "text": cleaned,
+            "transcript": transcript,
+            "formatted_transcript": rewrite_result["formatted_input"],
+            "language": transcribe_result["language"],
+            "duration_ms": transcribe_result["duration_ms"],
+            "transcribe_elapsed_ms": transcribe_result["elapsed_ms"],
+            "rewrite_elapsed_ms": rewrite_result["elapsed_ms"],
             "elapsed_ms": elapsed_ms,
-            "model": LLM_MODEL,
-            "max_tokens": max_tokens,
+            "asr_model": ASR_MODEL,
+            "llm_model": LLM_MODEL if REWRITE_ENABLED else None,
+            "max_tokens": rewrite_result["max_tokens"],
         }
     )
 

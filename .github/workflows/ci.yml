@@ -31,6 +31,9 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
+      - name: unit tests
+        run: python -m unittest discover -s tests
+
   shell:
     name: Shell script syntax
     runs-on: ubuntu-latest
@@ -46,3 +49,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -qq -y shellcheck
           shellcheck start.sh
+
+  macos:
+    name: Native macOS smoke test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and verify app bundle
+        run: ./macos/smoke-test.sh
+
+      - name: Package app archive
+        run: ./macos/package-app.sh
+
+      - name: Upload packaged app
+        uses: actions/upload-artifact@v4
+        with:
+          name: perstalk-flow-macos
+          path: |
+            macos/dist/*.zip
+            macos/dist/*.sha256

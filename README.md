@@ -31,6 +31,13 @@ Nothing ever leaves your machine.
 - **Editable transcript.** Tweak the result, append more dictation, copy or clear.
 - **Editable system prompt.** Click the gear icon to customise how Rewrite
   behaves. Persisted to disk.
+- **Native macOS Flow mode.** Build the app in `macos/` for a Wispr
+  Flow-style workflow: double-tap Fn/Globe, speak into a bottom-center pill
+  with a live waveform, then tap Fn/Globe once to transcribe, clean up, and
+  paste at the cursor.
+- **Simple native settings.** Choose a microphone, switch local Whisper
+  transcription models, switch Qwen rewrite models, edit the rewrite prompt, or
+  disable Qwen rewrite entirely so output comes directly from Whisper.
 - **No `ffmpeg` dependency.** Audio is captured as 16 kHz mono WAV directly in
   the browser and decoded with Python's stdlib.
 - **Single-page app.** ~600 lines of HTML/CSS/JS, ~300 lines of Python. Easy to
@@ -121,6 +128,10 @@ PERSTALK_PORT=8080 PERSTALK_MODEL=mlx-community/whisper-base-mlx ./start.sh
 | `PERSTALK_HOST`   | `127.0.0.1`                                       | Bind address.                                                        |
 | `PERSTALK_MODEL`  | `mlx-community/whisper-large-v3-turbo`            | Speech-to-text model. Any [mlx-community Whisper](https://huggingface.co/mlx-community?search_models=whisper) repo works. |
 | `PERSTALK_LLM`    | `mlx-community/Qwen2.5-3B-Instruct-4bit`          | Rewrite model. Any [mlx-community](https://huggingface.co/mlx-community) instruct LLM in MLX format works. |
+| `PERSTALK_REWRITE_ENABLED` | `1`                                      | Set to `0`, `false`, `no`, or `off` to skip Qwen loading and return Whisper output directly. |
+| `PERSTALK_REWRITE_MAX_TOKENS` | `2048`                              | Maximum LLM output tokens for rewrite; lower values can improve latency. |
+| `PERSTALK_REWRITE_MIN_TOKENS` | `64`                                | Minimum LLM output budget for short dictations. |
+| `PERSTALK_REWRITE_TOKEN_BUFFER` | `48`                              | Extra output tokens added after the input-length estimate. |
 
 ### Choosing a smaller speech model
 
@@ -149,6 +160,10 @@ The rewrite system prompt is fully under your control: click the gear icon,
 edit, save. The current value lives in `settings.json` in the project root.
 Press **Reset to default** to revert.
 
+In the native macOS app, open **Settings...** from the menu-bar icon to edit
+the same prompt, toggle Qwen rewrite on or off, and restart the app-owned local
+backend with the selected model settings.
+
 ---
 
 ## How it works
@@ -163,11 +178,71 @@ Press **Reset to default** to revert.
 │       │          │    │                 │    │  Qwen2.5-3B-Instruct│
 │       └─Rewrite─▶│    │  /rewrite       │───▶│  -4bit              │
 │                  │◀───┤  text response  │◀───┤                     │
+│                  │    │  /dictate       │    │  one-call native    │
+│  macOS popup     │───▶│  transcribe +   │───▶│  ASR + rewrite      │
+│  paste workflow  │◀───┤  rewrite        │◀───┤                     │
 └──────────────────┘    └─────────────────┘    └─────────────────────┘
 ```
 
 - Audio is captured with `getUserMedia` + an `AudioWorklet` and downsampled to
   16 kHz mono in the browser, then sent as a plain WAV blob.
+- The native macOS app records locally, sends one `/dictate` request, lightly
+  adapts cleanup to the active app, and inserts the result back at the cursor
+  after reactivating the target app.
+- The native popup is a fixed bottom-center black pill inspired by Wispr Flow,
+  with cancel and finish controls around a rolling live waveform driven by real
+  microphone sample levels.
+- Native recording uses the selected macOS microphone and writes a 16 kHz mono
+  WAV before sending it to the backend.
+- Qwen rewrite is optional in native settings; when disabled, `/dictate` waits
+  only for Whisper and returns the transcript directly.
+- With Accessibility permission, the native app tries direct focused-field text
+  insertion before falling back to clipboard paste with clipboard restoration.
+- The popup and Settings report whether the latest result used direct insertion,
+  clipboard paste fallback, or copy-only mode.
+- Native Settings and the menu-bar icon include a paste test that inserts a
+  timestamped sample through the same paste-at-cursor path used by dictation.
+- For target-app QA, focus any text field and run `open perstalk-flow://paste-test`
+  to trigger the same native paste test without opening Perstalk's menu.
+- The local `./macos/qa-paste-test.sh` script exercises the URL-triggered paste
+  path against TextEdit and reports automatic insertion or copy-only fallback.
+- If microphone or Accessibility access has already been denied, native Settings
+  opens the relevant macOS Privacy & Security pane.
+- Copy-only fallback does not repeatedly trigger the macOS Accessibility prompt;
+  refresh paste permission explicitly from native Settings or the menu-bar icon.
+- Development builds include a **Reset Paste Permission** action for stale
+  macOS Accessibility entries after rebuilding the app.
+- Common spoken formatting commands such as `comma`, `period`, `question mark`,
+  `new line`, and `new paragraph` are normalized before the local rewrite model
+  runs.
+- Capture starts immediately on shortcut press; backend and model readiness are
+  checked after release before sending audio to `/dictate`.
+- If the models are still warming on first run, the native app keeps the
+  captured audio queued while it waits for local readiness.
+- Active preparing, warmup, and processing can be canceled from the popup or
+  menu-bar icon.
+- The native popup stays bottom-center so it behaves like a stable control
+  surface instead of chasing the cursor or focused field.
+- Accidental taps shorter than 350 ms are ignored locally, and transient popup
+  states dismiss themselves after the result is handled.
+- The native app keeps the latest 50 cleaned dictations in a local history file
+  under `~/Library/Application Support/Perstalk Flow/` and exposes a menu action
+  to copy the most recent result again.
+- Local history can be disabled entirely from native Settings; turning it off
+  clears existing entries and stops future saves.
+- Local dictation history can be cleared from the native Settings window or
+  menu-bar icon.
+- Native Settings keeps the dashboard intentionally simple: speech model,
+  microphone, rewrite toggle/model/prompt, hotkey, login item, and permissions.
+- The native history records total, ASR, rewrite, and model metadata for recent
+  dictations so latency regressions can be checked locally.
+- The default shortcut is `Fn Fn`: double-tap Fn/Globe to dictate, then tap
+  Fn/Globe once to insert. It is configurable in the native Settings window.
+- Settings reports whether the global shortcut registered successfully and keeps
+  the previous working shortcut when a new choice conflicts.
+- The native app defaults to `whisper-large-v3-turbo` and
+  `Qwen2.5-1.5B-Instruct-4bit`; Settings can independently switch local
+  transcribe and rewrite models.
 - The Python backend decodes WAV with the stdlib `wave` module — no `ffmpeg`.
 - Both models are downloaded with `huggingface_hub.snapshot_download` and
   warmed at server startup in a background thread, so the very first Rewrite
@@ -179,9 +254,13 @@ Press **Reset to default** to revert.
 
 ```
 perstalk/
-├── server.py           # FastAPI app: /transcribe, /rewrite, /settings, /status
+├── server.py           # FastAPI app: /transcribe, /rewrite, /dictate, /settings, /status
 ├── index.html          # Single-page UI: mic capture, transcript, settings modal
+├── macos/              # Native menu-bar app, app bundle builder, bundled backend
 ├── start.sh            # Launcher: preflight + venv + start
+├── macos/smoke-test.sh # Native macOS bundle audit
+├── macos/qa-paste-test.sh # Local TextEdit paste workflow QA
+├── macos/package-app.sh # Native macOS zip + checksum packaging
 ├── requirements.txt    # Python dependencies
 ├── settings.json       # User-editable rewrite prompt (created on first save)
 ├── docs/screenshots/   # Screenshots used in this README

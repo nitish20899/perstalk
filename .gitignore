@@ -25,3 +25,9 @@ id_ed25519*
 
 # Perstalk user-editable settings (may contain a personal prompt)
 settings.json
+
+# macOS native app build outputs
+macos/build/
+macos/dist/
+macos/PerstalkMac/.build/
+macos/PerstalkMac/.swiftpm/

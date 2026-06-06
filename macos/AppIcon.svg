@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="184" y1="116" x2="852" y2="916" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#10BFA8"/>
+      <stop offset="0.48" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="276" y1="186" x2="720" y2="848" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.22"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="210" fill="url(#bg)"/>
+  <path d="M178 748C279 864 432 912 582 868C733 824 844 693 873 542C834 660 735 762 607 798C459 840 302 792 178 748Z" fill="#020617" opacity="0.18"/>
+  <path d="M230 210C318 142 446 120 584 148C716 175 823 245 878 350C781 276 659 235 532 235C414 235 308 270 230 210Z" fill="url(#shine)" opacity="0.22"/>
+
+  <g filter="url(#shadow)">
+    <rect x="396" y="214" width="232" height="404" rx="116" fill="#FFFFFF"/>
+    <rect x="438" y="262" width="148" height="308" rx="74" fill="#0F172A" opacity="0.9"/>
+    <path d="M300 478C300 455 319 436 342 436C365 436 384 455 384 478V494C384 565 441 622 512 622C583 622 640 565 640 494V478C640 455 659 436 682 436C705 436 724 455 724 478V494C724 592 651 674 554 688V762H646C670 762 690 782 690 806C690 830 670 850 646 850H378C354 850 334 830 334 806C334 782 354 762 378 762H470V688C373 674 300 592 300 494V478Z" fill="#FFFFFF"/>
+  </g>
+
+  <path d="M742 304C780 340 806 390 817 448" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" opacity="0.78"/>
+  <path d="M281 448C292 390 318 340 356 304" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" opacity="0.54"/>
+</svg>

@@ -51,6 +51,7 @@ Python is formatted and linted with [Ruff](https://docs.astral.sh/ruff/):
 source .venv/bin/activate
 ruff check .
 ruff format .
+python -m unittest discover -s tests
 ```
 
 CI runs the same checks on every push and PR (`.github/workflows/ci.yml`).
